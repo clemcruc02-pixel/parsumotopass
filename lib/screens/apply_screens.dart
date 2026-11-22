@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../data/app_state.dart';
+import '../data/document_picker.dart';
+import '../data/student_api.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import 'main_shell.dart';
@@ -41,7 +44,11 @@ class RequirementsScreen extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               children: [
                 const SectionLabel('Prepare these before applying'),
-                for (final item in _items)
+                for (final item in [
+                  ..._items,
+                  if (_state.requiresMotorcyclePhoto) 'Motorcycle photo',
+                ])
+                  if (_state.isDemo || item != 'Photocopy of Student ID')
                   ListRow(
                     child: Row(
                       children: [
@@ -174,25 +181,31 @@ class _ChecklistScreenState extends State<ChecklistScreen> {
 
   Map<String, List<String>> get _groups => _state.notOwned
       ? {
-          'Your documents': ['Student ID', 'Photocopy of Student ID'],
+          'Your documents': [
+            'Student ID',
+            if (_state.isDemo) 'Photocopy of Student ID',
+          ],
           'Owner documents': [
             "Photocopy of owner's ID",
             'Authorization / consent letter',
           ],
           'Motorcycle': [
             'Motorcycle registration',
-            'Motorcycle photo, if required',
+            _state.requiresMotorcyclePhoto
+                ? 'Motorcycle photo (required)'
+                : 'Motorcycle photo, if required',
             'Other school requirements',
           ],
         }
       : {
           'Required': [
             'Student ID',
-            'Photocopy of Student ID',
+            if (_state.isDemo) 'Photocopy of Student ID',
             'Motorcycle registration',
+            if (_state.requiresMotorcyclePhoto) 'Motorcycle photo',
           ],
           'If needed': [
-            'Motorcycle photo',
+            if (!_state.requiresMotorcyclePhoto) 'Motorcycle photo',
             'Other school requirements',
           ],
         };
@@ -265,6 +278,7 @@ class _StepScaffold extends StatelessWidget {
     required this.child,
     required this.onNext,
     this.nextLabel = 'Next',
+    this.busy = false,
   });
 
   final String title;
@@ -272,29 +286,32 @@ class _StepScaffold extends StatelessWidget {
   final Widget child;
   final VoidCallback? onNext;
   final String nextLabel;
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Column(
-        children: [
-          PageHeader(
-              title: title, subtitle: 'Step $step of 4', showBack: true),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  StepProgress(step: step),
-                  const SizedBox(height: 20),
-                  child,
-                ],
+    return PopScope(
+      canPop: !busy,
+      child: Scaffold(
+        body: Column(
+          children: [
+            PageHeader(title: title, subtitle: 'Step $step of 4', showBack: !busy),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    StepProgress(step: step),
+                    const SizedBox(height: 20),
+                    AbsorbPointer(absorbing: busy, child: child),
+                  ],
+                ),
               ),
             ),
-          ),
-          BottomActionBar(nextLabel: nextLabel, onNext: onNext),
-        ],
+            BottomActionBar(nextLabel: nextLabel, onNext: onNext),
+          ],
+        ),
       ),
     );
   }
@@ -316,6 +333,8 @@ class _StudentInfoScreenState extends State<StudentInfoScreen> {
 
   void _next() {
     if (!_formKey.currentState!.validate()) return;
+    _formKey.currentState!.save();
+    _state.updateDraft();
     if (widget.editing) {
       Navigator.of(context).pop();
     } else {
@@ -337,37 +356,45 @@ class _StudentInfoScreenState extends State<StudentInfoScreen> {
             LabeledField(
                 label: 'Full name',
                 initialValue: _state.fullName,
-                onChanged: (v) => _state.fullName = v,
+                readOnly: _state.hasStudentSession,
+                onChanged: widget.editing ? null : (v) => _state.fullName = v,
+                onSaved: (v) => _state.fullName = (v ?? '').trim(),
                 validator: requiredValidator),
             LabeledField(
                 label: 'Student ID no.',
                 initialValue: _state.studentId,
+                readOnly: _state.hasStudentSession,
                 keyboardType: TextInputType.number,
-                onChanged: (v) => _state.studentId = v,
+                onChanged: widget.editing ? null : (v) => _state.studentId = v,
+                onSaved: (v) => _state.studentId = (v ?? '').trim(),
                 validator: requiredValidator),
             LabeledField(
                 label: 'Course',
                 hint: 'e.g. BSCS',
                 initialValue: _state.course,
-                onChanged: (v) => _state.course = v,
+                onChanged: widget.editing ? null : (v) => _state.course = v,
+                onSaved: (v) => _state.course = (v ?? '').trim(),
                 validator: requiredValidator),
             LabeledField(
                 label: 'Year and section',
                 hint: 'e.g. 3A',
                 initialValue: _state.yearSection,
-                onChanged: (v) => _state.yearSection = v,
+                onChanged: widget.editing ? null : (v) => _state.yearSection = v,
+                onSaved: (v) => _state.yearSection = (v ?? '').trim(),
                 validator: requiredValidator),
             LabeledField(
                 label: 'Contact number',
                 hint: '09XX XXX XXXX',
                 initialValue: _state.contact,
                 keyboardType: TextInputType.phone,
-                onChanged: (v) => _state.contact = v,
+                onChanged: widget.editing ? null : (v) => _state.contact = v,
+                onSaved: (v) => _state.contact = (v ?? '').trim(),
                 validator: requiredValidator),
-            LabeledField(
+            if (_state.isDemo) LabeledField(
                 label: 'Address',
                 initialValue: _state.address,
-                onChanged: (v) => _state.address = v,
+                onChanged: widget.editing ? null : (v) => _state.address = v,
+                onSaved: (v) => _state.address = (v ?? '').trim(),
                 validator: requiredValidator),
           ],
         ),
@@ -392,6 +419,8 @@ class _VehicleInfoScreenState extends State<VehicleInfoScreen> {
 
   void _next() {
     if (!_formKey.currentState!.validate()) return;
+    _formKey.currentState!.save();
+    _state.updateDraft();
     if (widget.editing) {
       Navigator.of(context).pop();
     } else {
@@ -414,29 +443,34 @@ class _VehicleInfoScreenState extends State<VehicleInfoScreen> {
                 label: 'Plate no.',
                 hint: 'e.g. ABC 1234',
                 initialValue: _state.plateNo,
-                onChanged: (v) => _state.plateNo = v,
+                onChanged: widget.editing ? null : (v) => _state.plateNo = v,
+                onSaved: (v) => _state.plateNo = (v ?? '').trim(),
                 validator: requiredValidator),
             LabeledField(
                 label: 'Color',
                 initialValue: _state.color,
-                onChanged: (v) => _state.color = v,
+                onChanged: widget.editing ? null : (v) => _state.color = v,
+                onSaved: (v) => _state.color = (v ?? '').trim(),
                 validator: requiredValidator),
             LabeledField(
                 label: 'Brand / model',
                 hint: 'e.g. Yamaha NMAX',
                 initialValue: _state.brandModel,
-                onChanged: (v) => _state.brandModel = v,
+                onChanged: widget.editing ? null : (v) => _state.brandModel = v,
+                onSaved: (v) => _state.brandModel = (v ?? '').trim(),
                 validator: requiredValidator),
             LabeledField(
                 label: 'OR/CR number',
                 initialValue: _state.orCrNo,
-                onChanged: (v) => _state.orCrNo = v,
+                onChanged: widget.editing ? null : (v) => _state.orCrNo = v,
+                onSaved: (v) => _state.orCrNo = (v ?? '').trim(),
                 validator: requiredValidator),
             if (_state.notOwned)
               LabeledField(
                   label: "Owner's name",
                   initialValue: _state.ownerName,
-                  onChanged: (v) => _state.ownerName = v,
+                  onChanged: widget.editing ? null : (v) => _state.ownerName = v,
+                  onSaved: (v) => _state.ownerName = (v ?? '').trim(),
                   validator: requiredValidator),
           ],
         ),
@@ -452,10 +486,23 @@ class UploadScreen extends StatelessWidget {
   const UploadScreen({super.key, this.editing = false});
   final bool editing;
 
-  bool _isOptional(UploadSlot s) => s.label == 'Motorcycle photo';
-
-  /// Placeholder for a real file/image picker.
   Future<void> _pick(BuildContext context, UploadSlot slot) async {
+    if (!_state.isDemo) {
+      try {
+        final file = await pickDocument();
+        if (file == null || !context.mounted) return;
+        _state.markUploaded(slot, file.name, bytes: file.bytes);
+      } catch (error) {
+        if (!context.mounted) return;
+        final message = switch (error) {
+          StudentApiException(:final message) => message,
+          PlatformException(:final message) => message ?? 'Could not read the selected file.',
+          _ => 'Could not read the selected file.',
+        };
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
+      return;
+    }
     final source = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
@@ -476,7 +523,7 @@ class UploadScreen extends StatelessWidget {
         ),
       ),
     );
-    if (source == null) return;
+    if (source == null || !context.mounted) return;
     final name =
         '${slot.label.toLowerCase().replaceAll(RegExp(r'[^a-z]+'), '_')}.jpg';
     _state.markUploaded(slot, name);
@@ -487,9 +534,7 @@ class UploadScreen extends StatelessWidget {
     return ListenableBuilder(
       listenable: _state,
       builder: (context, _) {
-        final ready = _state.uploads
-            .where((s) => !_isOptional(s))
-            .every((s) => s.uploaded);
+        final ready = _state.requiredUploadsReady;
         return _StepScaffold(
           title: 'Upload',
           step: 3,
@@ -530,7 +575,7 @@ class UploadScreen extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                slot.label + (_isOptional(slot) ? '' : ' *'),
+                                slot.label + (slot.required ? ' *' : ''),
                                 style: const TextStyle(
                                     fontWeight: FontWeight.w700),
                               ),
@@ -660,8 +705,15 @@ class ReviewScreen extends StatelessWidget {
         ),
       ),
     );
-    if (submit != true || !context.mounted) return;
-    _state.submit();
+    if (submit != true || !context.mounted || _state.submitting) return;
+    try {
+      await _state.submit();
+    } on StudentApiException catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+      return;
+    }
+    if (!context.mounted || !_state.hasActiveApplication) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const SubmittedScreen()),
       (_) => false,
@@ -675,8 +727,11 @@ class ReviewScreen extends StatelessWidget {
       builder: (context, _) => _StepScaffold(
         title: 'Review',
         step: 4,
-        nextLabel: 'Looks good',
-        onNext: () => _confirmSubmit(context),
+        busy: _state.submitting,
+        nextLabel: _state.submitting ? 'Submitting…' : 'Looks good',
+        onNext: _state.requiredUploadsReady && !_state.submitting
+            ? () => _confirmSubmit(context)
+            : null,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -688,6 +743,7 @@ class ReviewScreen extends StatelessWidget {
                 'ID no.': _state.studentId,
                 'Course': '${_state.course} ${_state.yearSection}'.trim(),
                 'Contact': _state.contact,
+                if (_state.address.isNotEmpty) 'Address': _state.address,
               },
             ),
             _summary(
@@ -697,13 +753,18 @@ class ReviewScreen extends StatelessWidget {
                 'Model': _state.brandModel,
                 'Plate': _state.plateNo,
                 'Color': _state.color,
+                'OR/CR no.': _state.orCrNo,
                 'Owner': _state.notOwned ? _state.ownerName : 'Me',
               },
             ),
             _summary(
               'Documents',
               () => _go(context, const UploadScreen(editing: true)),
-              {'Files': '${_state.uploadedCount} uploaded'},
+              {
+                for (final slot in _state.uploads)
+                  slot.label: slot.fileName ??
+                      (slot.required ? 'Missing' : 'Optional'),
+              },
             ),
           ],
         ),

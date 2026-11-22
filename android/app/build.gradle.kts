@@ -4,6 +4,12 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val releaseSigningVariables = listOf(
+    "MOTOPASS_KEYSTORE", "MOTOPASS_STORE_PASSWORD", "MOTOPASS_KEY_ALIAS", "MOTOPASS_KEY_PASSWORD"
+)
+val releaseSigning = releaseSigningVariables.associateWith { providers.environmentVariable(it).orNull }
+val pilotApplicationId = providers.environmentVariable("MOTOPASS_APPLICATION_ID").orNull
+
 android {
     namespace = "com.example.parsu_motopass"
     compileSdk = flutter.compileSdkVersion
@@ -15,8 +21,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.parsu_motopass"
+        applicationId = pilotApplicationId ?: "com.example.parsu_motopass"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -29,12 +34,38 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("pilotRelease") {
+            storeFile = releaseSigning["MOTOPASS_KEYSTORE"]?.let { file(it) }
+            storePassword = releaseSigning["MOTOPASS_STORE_PASSWORD"]
+            keyAlias = releaseSigning["MOTOPASS_KEY_ALIAS"]
+            keyPassword = releaseSigning["MOTOPASS_KEY_PASSWORD"]
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("pilotRelease")
         }
+    }
+}
+
+val requireReleaseSigning by tasks.registering {
+    doLast {
+        val missing = releaseSigning.filterValues { it.isNullOrBlank() }.keys
+        check(missing.isEmpty()) { "Missing Android release signing inputs: ${missing.joinToString()}" }
+        val applicationId = pilotApplicationId.orEmpty()
+        check(
+            !applicationId.startsWith("com.example.") &&
+                Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+").matches(applicationId)
+        ) { "Set MOTOPASS_APPLICATION_ID to the approved Android package ID." }
+    }
+}
+
+tasks.configureEach {
+    when (name) {
+        "validateSigningRelease", "packageRelease", "packageReleaseBundle",
+        "signReleaseBundle", "assembleRelease", "bundleRelease" -> dependsOn(requireReleaseSigning)
     }
 }
 

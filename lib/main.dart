@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -11,7 +12,11 @@ void main() {
 }
 
 class MotopassApp extends StatelessWidget {
-  const MotopassApp({super.key});
+  const MotopassApp({
+    super.key,
+    this.demo = kDebugMode && const bool.fromEnvironment('MOTOPASS_DEMO'),
+  });
+  final bool demo;
 
   @override
   Widget build(BuildContext context) {
@@ -19,9 +24,7 @@ class MotopassApp extends StatelessWidget {
       title: 'ParSU Motopass',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
-      home: const LoginScreen(),
+      home: LoginScreen(demo: demo),
     );
   }
 }
-
-class MotopassApp extends

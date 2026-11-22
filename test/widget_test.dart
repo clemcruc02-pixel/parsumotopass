@@ -1,10 +1,58 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:parsu_motopass/data/app_state.dart';
 import 'package:parsu_motopass/main.dart';
+import 'package:parsu_motopass/screens/apply_screens.dart';
+import 'package:parsu_motopass/widgets/common.dart';
 
 void main() {
+  setUp(AppState.instance.logout);
+
+  testWidgets('Review keeps the original name on Back and refreshes on Save',
+      (tester) async {
+    final state = AppState.instance;
+    state
+      ..fullName = 'Original Student'
+      ..studentId = '123456'
+      ..course = 'BSCS'
+      ..yearSection = '3A'
+      ..contact = '09000000000'
+      ..address = 'Test Address'
+      ..plateNo = 'ABC123'
+      ..color = 'Blue'
+      ..brandModel = 'Test Motorcycle'
+      ..orCrNo = 'TEST123';
+    for (final slot in state.uploads.where((slot) => slot.required)) {
+      state.markUploaded(slot, 'test-document.jpg');
+    }
+
+    await tester.pumpWidget(const MaterialApp(home: ReviewScreen()));
+
+    Future<void> editName(String name) async {
+      final edit = find.widgetWithText(SectionLabel, 'STUDENT');
+      await tester.tap(find.descendant(of: edit, matching: find.text('Edit')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(EditableText).first, name);
+    }
+
+    await editName('Discarded Student');
+    await tester.tap(find.descendant(
+      of: find.byType(BottomActionBar),
+      matching: find.text('Back'),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Original Student'), findsOneWidget);
+    expect(state.fullName, 'Original Student');
+
+    await editName('Updated Student');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(find.text('Updated Student'), findsOneWidget);
+    expect(state.fullName, 'Updated Student');
+  });
+
   testWidgets('Login screen shows and navigates to Home', (tester) async {
-    await tester.pumpWidget(const MotopassApp());
+    await tester.pumpWidget(const MotopassApp(demo: true));
 
     expect(find.text('ParSU Motopass'), findsOneWidget);
     expect(find.text('Log In'), findsOneWidget);
@@ -25,7 +73,7 @@ void main() {
     tester.view.devicePixelRatio = 2.5;
     addTearDown(tester.view.reset);
 
-    await tester.pumpWidget(const MotopassApp());
+    await tester.pumpWidget(const MotopassApp(demo: true));
     final fields = find.byType(EditableText);
     await tester.enterText(fields.at(0), '202410654');
     await tester.enterText(fields.at(1), 'secret123');
@@ -56,12 +104,19 @@ void main() {
     }
     await tapText('Next');
 
-    // Step 3: upload required files
-    while (find.text('Upload').evaluate().length > 1) {
-      // skip the header title "Upload"; tap first slot button still showing Upload
-      final buttons = find.widgetWithText(TextButton, 'Upload');
-      if (buttons.evaluate().isEmpty) break;
-      await tester.tap(buttons.first);
+    // Leave the optional motorcycle photo empty.
+    final requiredSlots = AppState.instance.uploads.where((slot) => slot.required);
+    for (final slot in requiredSlots) {
+      final card = find.ancestor(
+        of: find.text('${slot.label} *'),
+        matching: find.byType(OutlinedCard),
+      );
+      final button = find.descendant(
+        of: card,
+        matching: find.widgetWithText(TextButton, 'Upload'),
+      );
+      await tester.ensureVisible(button);
+      await tester.tap(button);
       await tester.pumpAndSettle();
       await tapText('Choose from gallery');
     }

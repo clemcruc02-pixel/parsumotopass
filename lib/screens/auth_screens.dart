@@ -1,9 +1,12 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../data/app_state.dart';
+import '../data/student_api.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import 'main_shell.dart';
+import 'staff_workspace.dart';
 
 class _Logo extends StatelessWidget {
   const _Logo();
@@ -65,7 +68,9 @@ class _FooterLink extends StatelessWidget {
 }
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, this.demo = kDebugMode &&
+      const bool.fromEnvironment('MOTOPASS_DEMO')});
+  final bool demo;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -73,12 +78,27 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
+  String _identity = '';
+  String _password = '';
+  bool _busy = false;
 
-  void _login() {
-    if (!_formKey.currentState!.validate()) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const MainShell()),
-    );
+  Future<void> _login() async {
+    if (_busy || !_formKey.currentState!.validate()) return;
+    setState(() => _busy = true);
+    try {
+      await AppState.instance.signIn(_identity, _password, demo: widget.demo);
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => AppState.instance.isStaff
+            ? const StaffWorkspace()
+            : const MainShell()),
+      );
+    } on StudentApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
@@ -94,17 +114,23 @@ class _LoginScreenState extends State<LoginScreen> {
               children: [
                 const _Logo(),
                 const SizedBox(height: 36),
-                const LabeledField(
-                    label: 'Student ID / Email', validator: requiredValidator),
-                const LabeledField(
+                LabeledField(
+                    label: 'Campus ID / Email',
+                    onChanged: (value) => _identity = value,
+                    validator: requiredValidator),
+                LabeledField(
                     label: 'Password',
                     hint: '••••••••',
                     obscure: true,
+                    onChanged: (value) => _password = value,
                     validator: requiredValidator),
                 const SizedBox(height: 8),
-                PrimaryButton(label: 'Log In', onPressed: _login),
+                PrimaryButton(label: _busy ? 'Signing in…' : 'Log In',
+                    onPressed: _busy ? null : _login),
                 const SizedBox(height: 14),
-                _FooterLink(
+                if (!widget.demo)
+                  const Center(child: Text('Contact the campus office for account access.')),
+                if (widget.demo && !_busy) _FooterLink(
                   prompt: 'No account yet?',
                   action: 'Sign Up',
                   onTap: () => Navigator.of(context).push(
@@ -135,6 +161,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
   void _create() {
     if (!_formKey.currentState!.validate()) return;
     final state = AppState.instance;
+    state.isDemo = true;
     state.studentName = _name.trim().split(' ').first;
     state.fullName = _name.trim();
     Navigator.of(context).pushAndRemoveUntil(

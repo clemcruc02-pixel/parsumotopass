@@ -1,0 +1,85 @@
+name: Signed Android pilot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signed-release:
+    if: github.ref == 'refs/heads/main'
+    environment: pilot-signing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      FLUTTER_VERSION: '3.47.9'
+      FLUTTER_REVISION: c197ca5199e9ee5661e865596c9c07294dfab51c
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Prepare pinned toolchain
+        shell: bash
+        run: |
+          flutter_sdk="$RUNNER_TEMP/flutter-sdk"
+          git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$flutter_sdk"
+          test "$(git -C "$flutter_sdk" rev-parse HEAD)" = "$FLUTTER_REVISION"
+          echo "$flutter_sdk/bin" >> "$GITHUB_PATH"
+          export PATH="$flutter_sdk/bin:$PATH"
+          flutter precache --android
+          flutter pub get --enforce-lockfile
+          sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358'
+      - name: Qualify source
+        run: |
+          python3 -m unittest backend.test_server -v
+          flutter analyze --no-pub
+          flutter test --no-pub
+      - name: Build and verify signed artifacts
+        shell: bash
+        env:
+          MOTOPASS_APPLICATION_ID: ${{ vars.MOTOPASS_APPLICATION_ID }}
+          PILOT_API_URL: ${{ vars.MOTOPASS_PILOT_API_URL }}
+          CERT_SHA256: ${{ vars.MOTOPASS_SIGNING_CERT_SHA256 }}
+          KEYSTORE_BASE64: ${{ secrets.MOTOPASS_KEYSTORE_BASE64 }}
+          MOTOPASS_STORE_PASSWORD: ${{ secrets.MOTOPASS_STORE_PASSWORD }}
+          MOTOPASS_KEY_ALIAS: ${{ secrets.MOTOPASS_KEY_ALIAS }}
+          MOTOPASS_KEY_PASSWORD: ${{ secrets.MOTOPASS_KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_BASE64"
+          [[ "$PILOT_API_URL" == https://?* ]]
+          expected="$(printf '%s' "$CERT_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          export MOTOPASS_KEYSTORE="$(mktemp "$RUNNER_TEMP/motopass-signing-XXXXXX")"
+          trap 'rm -f -- "$MOTOPASS_KEYSTORE"' EXIT
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$MOTOPASS_KEYSTORE"
+          unset KEYSTORE_BASE64
+          flutter build apk --release --no-pub --dart-define="MOTOPASS_API_URL=$PILOT_API_URL"
+          flutter build appbundle --release --no-pub --dart-define="MOTOPASS_API_URL=$PILOT_API_URL"
+          apk=build/app/outputs/flutter-apk/app-release.apk
+          bundle=build/app/outputs/bundle/release/app-release.aab
+          android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?Android SDK path is missing}}"
+          build_tools="$android_sdk/build-tools/36.0.0"
+          digest="$("$build_tools/apksigner" verify --print-certs "$apk" |
+            awk -F ': ' '/certificate SHA-256 digest/ { print tolower($2) }')"
+          test "$digest" = "$expected"
+          test "$("$build_tools/aapt" dump badging "$apk" |
+            sed -n "s/^package: name='\([^']*\)'.*/\1/p")" = "$MOTOPASS_APPLICATION_ID"
+          jarsigner -verify "$bundle" | grep -Fx 'jar verified.'
+          bundle_digest="$(keytool -printcert -jarfile "$bundle" |
+            awk '/SHA256:/ { gsub(/:/, "", $2); print tolower($2) }')"
+          test "$bundle_digest" = "$expected"
+          sha256sum "$apk" "$bundle" > build/pilot-artifacts.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-android-pilot
+          if-no-files-found: error
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release.aab
+            build/pilot-artifacts.sha256

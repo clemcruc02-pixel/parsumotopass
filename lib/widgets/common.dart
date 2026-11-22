@@ -27,12 +27,10 @@ class PageHeader extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           if (showBack)
-            InkWell(
-              onTap: () => Navigator.of(context).maybePop(),
-              child: const Padding(
-                padding: EdgeInsets.only(right: 6),
-                child: Icon(Icons.chevron_left, color: Colors.white, size: 30),
-              ),
+            IconButton(
+              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+              onPressed: () => Navigator.of(context).maybePop(),
+              icon: const Icon(Icons.chevron_left, color: Colors.white, size: 30),
             ),
           Expanded(
             child: Column(
@@ -65,6 +63,7 @@ class AlertBell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return IconButton(
+      tooltip: hasDot ? 'Alerts, new updates' : 'Alerts',
       onPressed: onTap,
       icon: Stack(
         clipBehavior: Clip.none,
@@ -94,9 +93,8 @@ class PrimaryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      height: 46,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: double.infinity, minHeight: 48),
       child: FilledButton(
         style: FilledButton.styleFrom(
           backgroundColor: AppColors.green,
@@ -219,7 +217,9 @@ class LabeledField extends StatelessWidget {
     this.hint = 'Enter here',
     this.initialValue,
     this.onChanged,
+    this.onSaved,
     this.obscure = false,
+    this.readOnly = false,
     this.keyboardType,
     this.validator,
   });
@@ -228,7 +228,9 @@ class LabeledField extends StatelessWidget {
   final String hint;
   final String? initialValue;
   final ValueChanged<String>? onChanged;
+  final FormFieldSetter<String>? onSaved;
   final bool obscure;
+  final bool readOnly;
   final TextInputType? keyboardType;
   final FormFieldValidator<String>? validator;
 
@@ -245,7 +247,9 @@ class LabeledField extends StatelessWidget {
           TextFormField(
             initialValue: initialValue,
             onChanged: onChanged,
+            onSaved: onSaved,
             obscureText: obscure,
+            readOnly: readOnly,
             keyboardType: keyboardType,
             validator: validator,
             decoration: InputDecoration(hintText: hint),

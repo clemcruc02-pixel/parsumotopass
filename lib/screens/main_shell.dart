@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../data/app_state.dart';
@@ -18,6 +20,29 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   late int _tab = widget.initialTab;
+  Timer? _updates;
+
+  @override
+  void initState() {
+    super.initState();
+    if (AppState.instance.hasStudentSession) {
+      _updates = Timer.periodic(
+        const Duration(seconds: 30),
+        (_) => AppState.instance.refreshApplication(),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _updates?.cancel();
+    super.dispose();
+  }
+
+  void _selectTab(int index) {
+    setState(() => _tab = index);
+    if (index == 1) AppState.instance.refreshApplication();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -25,13 +50,13 @@ class _MainShellState extends State<MainShell> {
       body: IndexedStack(
         index: _tab,
         children: [
-          HomeTab(onTrack: () => setState(() => _tab = 1)),
+          HomeTab(onTrack: () => _selectTab(1)),
           const MyApplicationTab(),
         ],
       ),
       bottomNavigationBar: AppTabBar(
         index: _tab,
-        onChanged: (i) => setState(() => _tab = i),
+        onChanged: _selectTab,
       ),
     );
   }
@@ -95,13 +120,24 @@ class HomeTab extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.logout),
               title: const Text('Log out'),
-              onTap: () {
-                AppState.instance.logout();
+              onTap: () async {
+                final demo = AppState.instance.isDemo;
+                final messenger = ScaffoldMessenger.of(context);
                 Navigator.of(ctx).pop();
+                final signOut = AppState.instance.signOut();
                 Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  MaterialPageRoute(builder: (_) => LoginScreen(demo: demo)),
                   (_) => false,
                 );
+                try {
+                  await signOut;
+                } catch (_) {
+                  if (messenger.mounted) {
+                    messenger.showSnackBar(const SnackBar(
+                      content: Text('Signed out on this device. Server sign-out could not be confirmed.'),
+                    ));
+                  }
+                }
               },
             ),
           ],

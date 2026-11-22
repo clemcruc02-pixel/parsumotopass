@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import 'apply_screens.dart';
 
 String statusTitle(AppStatus s) => switch (s) {
       AppStatus.submitted => 'Submitted',
@@ -10,6 +11,9 @@ String statusTitle(AppStatus s) => switch (s) {
       AppStatus.underReview => 'Under review',
       AppStatus.approved => 'Approved',
       AppStatus.readyForRelease => 'Ready for release',
+      AppStatus.rejected => 'Rejected',
+      AppStatus.released => 'Released',
+      AppStatus.needsCorrection => 'Needs correction',
     };
 
 const _pendingText = {
@@ -50,7 +54,34 @@ class TrackingView extends StatelessWidget {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
                 children: [
-                  for (final s in AppStatus.values)
+                  if (!state.isDemo) ...[
+                    Text(statusTitle(current),
+                        style: Theme.of(context).textTheme.headlineSmall),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const _ApplicationRecords()),
+                      ),
+                      child: const Text('Past applications'),
+                    ),
+                    if (current == AppStatus.readyForRelease ||
+                        current == AppStatus.released)
+                      TextButton(
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute(builder: (_) => const ReleaseScreen()),
+                        ),
+                        child: Text(current == AppStatus.released
+                            ? 'View pickup history'
+                            : 'View pickup details'),
+                      ),
+                    const ListTile(title: Text('Application history')),
+                    for (final event in state.alerts)
+                      ListTile(
+                        title: Text(event.title),
+                        subtitle: Text('${event.message}\n${eventTime(context, event.time)}'),
+                      ),
+                  ],
+                  if (state.isDemo)
+                    for (final s in _pendingText.keys)
                     _TimelineStep(
                       title: statusTitle(s),
                       subtitle: _pendingText[s]!,
@@ -82,8 +113,27 @@ class TrackingView extends StatelessWidget {
                           : null,
                     ),
                   const SizedBox(height: 24),
+                  if (state.canStartAnotherApplication)
+                    FilledButton(
+                      onPressed: () {
+                        state.beginAnotherApplication();
+                        Navigator.of(context).push(
+                          MaterialPageRoute(builder: (_) => const RequirementsScreen()),
+                        );
+                      },
+                      child: const Text('New application'),
+                    ),
+                  if (state.canCorrectApplication)
+                    FilledButton(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const RequirementsScreen()),
+                      ),
+                      child: const Text('Correct and resubmit'),
+                    ),
+                  if (!state.isDemo)
+                    const _RefreshUpdates(),
                   // Prototype-only control so the later screens can be previewed.
-                  if (current != AppStatus.readyForRelease)
+                  if (state.isDemo && current != AppStatus.readyForRelease)
                     Center(
                       child: TextButton.icon(
                         onPressed: state.advanceStatus,
@@ -101,6 +151,43 @@ class TrackingView extends StatelessWidget {
       },
     );
   }
+}
+
+class _ApplicationRecords extends StatefulWidget {
+  const _ApplicationRecords();
+
+  @override
+  State<_ApplicationRecords> createState() => _ApplicationRecordsState();
+}
+
+class _ApplicationRecordsState extends State<_ApplicationRecords> {
+  late final _records = AppState.instance.applicationHistory();
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Past applications')),
+    body: FutureBuilder(
+      future: _records,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (!snapshot.hasData) {
+          return const Center(child: Text('Could not load your application history.'));
+        }
+        return ListView(
+          children: [
+            for (final record in snapshot.data!)
+              ListTile(
+                title: Text(record['reference'] as String),
+                subtitle: Text(statusTitle(AppStatus.values.byName(record['status'] as String))),
+                trailing: Text(eventTime(context, record['submittedAt'] as String)),
+              ),
+          ],
+        );
+      },
+    ),
+  );
 }
 
 class _TimelineStep extends StatelessWidget {
@@ -213,6 +300,7 @@ class AlertsScreen extends StatelessWidget {
           children: [
             const PageHeader(
                 title: 'Alerts', subtitle: 'Latest updates', showBack: true),
+            if (!state.isDemo) const _RefreshUpdates(),
             Expanded(
               child: state.alerts.isEmpty
                   ? const Center(
@@ -251,7 +339,7 @@ class AlertsScreen extends StatelessWidget {
                                   ],
                                 ),
                               ),
-                              Text(a.time,
+                              Text(eventTime(context, a.time),
                                   style: const TextStyle(
                                       fontSize: 11, color: AppColors.muted)),
                             ],
@@ -275,13 +363,25 @@ class ReleaseScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ref = AppState.instance.referenceNo ?? '';
+    final state = AppState.instance;
+    return ListenableBuilder(
+      listenable: state,
+      builder: (context, _) => _content(context, state),
+    );
+  }
+
+  Widget _content(BuildContext context, AppState state) {
+    final ref = state.referenceNo ?? '';
+    final released = state.status == AppStatus.released;
+    final location = state.pickup?['location'] as String?;
+    final hours = state.pickup?['hours'] as String?;
     const dashed = Divider(height: 1, color: AppColors.border);
     return Scaffold(
       body: Column(
         children: [
-          const PageHeader(
-              title: 'Release', subtitle: 'Sticker is ready', showBack: true),
+          PageHeader(
+              title: released ? 'Pickup history' : 'Pickup details',
+              subtitle: ref, showBack: true),
           Expanded(
             child: ListView(
               padding: const EdgeInsets.all(16),
@@ -298,31 +398,39 @@ class ReleaseScreen extends StatelessWidget {
                       Container(
                         color: AppColors.greenLight,
                         padding: const EdgeInsets.all(16),
-                        child: const Column(
+                        child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('Ready for pickup',
-                                style: TextStyle(
+                            Text(released ? 'Sticker picked up' : 'Ready for pickup',
+                                style: const TextStyle(
                                     fontSize: 17,
                                     fontWeight: FontWeight.w800)),
-                            Text('Canteen', style: TextStyle(fontSize: 13)),
+                            if (location != null) Text(location),
+                            if (state.isDemo) const Text('Canteen'),
                           ],
                         ),
                       ),
-                      dashed,
-                      const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Text('Mon–Fri · 8:00 AM – 5:00 PM'),
-                      ),
+                      if (hours != null)
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Text(hours),
+                        ),
+                      if (released && state.alerts.isNotEmpty)
+                        ListTile(
+                          title: const Text('Recorded on'),
+                          subtitle: Text(eventTime(context, state.alerts.first.time)),
+                        ),
+                      if (!released && !state.isDemo && location == null)
+                        const ListTile(title: Text('Contact the permit office for pickup instructions.')),
                       dashed,
                       Padding(
                         padding: const EdgeInsets.all(16),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('Bring',
+                            if (!released) const Text('Bring',
                                 style: TextStyle(color: AppColors.muted)),
-                            const Text('Student ID',
+                            if (!released) const Text('Student ID',
                                 style: TextStyle(fontWeight: FontWeight.w800)),
                             Text('Ref. $ref'),
                           ],
@@ -360,6 +468,33 @@ class ReleaseScreen extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+String eventTime(BuildContext context, String value) {
+  final time = DateTime.tryParse(value)?.toLocal();
+  if (time == null) return value;
+  final labels = MaterialLocalizations.of(context);
+  return '${labels.formatShortDate(time)} ${labels.formatTimeOfDay(TimeOfDay.fromDateTime(time))}';
+}
+
+class _RefreshUpdates extends StatelessWidget {
+  const _RefreshUpdates();
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppState.instance;
+    return Column(
+      children: [
+        if (state.refreshError case final error?)
+          Padding(padding: const EdgeInsets.all(8), child: Text(error)),
+        TextButton.icon(
+          icon: const Icon(Icons.refresh),
+          label: Text(state.refreshing ? 'Refreshing...' : 'Refresh updates'),
+          onPressed: state.refreshing ? null : state.refreshApplication,
+        ),
+      ],
     );
   }
 }

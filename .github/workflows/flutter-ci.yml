@@ -1,0 +1,44 @@
+name: Flutter CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      FLUTTER_VERSION: '3.47.9'
+      FLUTTER_REVISION: c197ca5199e9ee5661e865596c9c07294dfab51c
+    steps:
+      - name: Check out project
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter
+        shell: bash
+        run: |
+          flutter_sdk="$RUNNER_TEMP/flutter-sdk"
+          git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$flutter_sdk"
+          test "$(git -C "$flutter_sdk" rev-parse HEAD)" = "$FLUTTER_REVISION"
+          "$flutter_sdk/bin/flutter" --version
+          echo "$flutter_sdk/bin" >> "$GITHUB_PATH"
+
+      - name: Restore dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Analyze
+        run: flutter analyze --no-pub
+
+      - name: Test
+        run: flutter test --no-pub
+
+      - name: Test synthetic pilot service
+        run: python3 -m unittest discover -s backend -v
+
